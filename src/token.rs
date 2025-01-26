@@ -1,8 +1,8 @@
 use std::ops::Range;
 use winnow::{
     ascii::{alpha1, digit1, line_ending, multispace1},
-    combinator::{alt, dispatch, eof, peek, preceded, repeat},
-    error::{ErrMode, ErrorKind, ParserError},
+    combinator::{alt, dispatch, eof, peek, repeat},
+    error::{ContextError, ErrMode, ErrorKind, ParseError, ParserError},
     token::{any, one_of, take_till, take_until},
     LocatingSlice, PResult, Parser,
 };
@@ -34,6 +34,7 @@ enum TokenType {
     Brace,
     Comma,
     Colon,
+    SemiColon,
     Period,
     DoublePeriod,
     LineComment,
@@ -62,16 +63,24 @@ impl Token {
     }
 }
 
+fn parse_all(i: &str) -> Result<Vec<Token>, ParseError<LocatingSlice<&str>, ContextError>> {
+    match repeat(0.., make_token).parse(LocatingSlice::new(i)) {
+        Ok(tokens) => Ok(tokens),
+        Err(e) => Err(e),
+    }
+}
+
 fn make_token(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     dispatch!(
         peek(any);
-        '/' => line_comment,
+        '/' => alt((line_comment, operator)),
         ':' => colon,
+        ';' => semicolon,
         ',' => comma,
         '.' => alt((double_period, period)),
         '"' => string,
-        '(' | '[' | '{' | '<' => brace_open,
-        ')' | ']' | '}' | '>' => brace_close,
+        '(' | '[' | '{' => brace_open,
+        ')' | ']' | '}' => brace_close,
         '+' | '-' | '*' | '>' | '<' | '=' => operator,
         ' ' | '\t' | '\n' | '\r' => white_space,
         '0'..='9' => number,
@@ -114,6 +123,15 @@ fn colon(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     Ok(Token::from_range(
         range,
         TokenType::Colon,
+        value.to_string(),
+    ))
+}
+
+fn semicolon(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+    let (value, range) = ';'.with_span().parse_next(i)?;
+    Ok(Token::from_range(
+        range,
+        TokenType::SemiColon,
         value.to_string(),
     ))
 }
@@ -181,32 +199,16 @@ fn line_comment(i: &mut LocatingSlice<&str>) -> PResult<Token> {
 }
 
 fn brace_open(i: &mut LocatingSlice<&str>) -> PResult<Token> {
-    let next_char = peek(any).parse_next(i)?;
-    match next_char {
-        '<' => match peek(alt(("</", preceded("", alpha1)))).parse_next(i) {
-            Ok(_) => {
-                let (value, range) = alt(("</", "<")).with_span().parse_next(i)?;
-                Ok(Token::from_range(
-                    range,
-                    TokenType::Brace,
-                    value.to_string(),
-                ))
-            }
-            Err(e) => Err(e),
-        },
-        _ => {
-            let (value, range) = alt(("{", "(", "[")).with_span().parse_next(i)?;
-            Ok(Token::from_range(
-                range,
-                TokenType::Brace,
-                value.to_string(),
-            ))
-        }
-    }
+    let (value, range) = alt(("{", "(", "[")).with_span().parse_next(i)?;
+    Ok(Token::from_range(
+        range,
+        TokenType::Brace,
+        value.to_string(),
+    ))
 }
 
 fn brace_close(i: &mut LocatingSlice<&str>) -> PResult<Token> {
-    let (value, range) = one_of(('}', ')', ']', '>')).with_span().parse_next(i)?;
+    let (value, range) = one_of(('}', ')', ']')).with_span().parse_next(i)?;
     Ok(Token::from_range(
         range,
         TokenType::Brace,
@@ -422,8 +424,6 @@ mod tests {
             ("{", Token::new(0, 1, TokenType::Brace, "{".to_string())),
             ("(", Token::new(0, 1, TokenType::Brace, "(".to_string())),
             ("[", Token::new(0, 1, TokenType::Brace, "[".to_string())),
-            ("<", Token::new(0, 1, TokenType::Brace, "<".to_string())),
-            ("</", Token::new(0, 2, TokenType::Brace, "</".to_string())),
         ];
         for (input, expected) in tests {
             let actual = brace_open(&mut LocatingSlice::new(input)).unwrap();
@@ -437,10 +437,18 @@ mod tests {
             ("}", Token::new(0, 1, TokenType::Brace, "}".to_string())),
             (")", Token::new(0, 1, TokenType::Brace, ")".to_string())),
             ("]", Token::new(0, 1, TokenType::Brace, "]".to_string())),
-            (">", Token::new(0, 1, TokenType::Brace, ">".to_string())),
         ];
         for (input, expected) in tests {
             let actual = brace_close(&mut LocatingSlice::new(input)).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_semicolon() {
+        let tests = vec![(";", Token::new(0, 1, TokenType::SemiColon, ";".to_string()))];
+        for (input, expected) in tests {
+            let actual = semicolon(&mut LocatingSlice::new(input)).unwrap();
             assert_eq!(expected, actual);
         }
     }
@@ -476,28 +484,40 @@ mod tests {
             (
                 r#"<div class="flex">{ name }</div>"#,
                 vec![
-                    Token::new(0, 1, TokenType::Brace, "<".to_string()),
+                    Token::new(0, 1, TokenType::Operator, "<".to_string()),
                     Token::new(1, 4, TokenType::Word, "div".to_string()),
                     Token::new(4, 5, TokenType::WhiteSpace, " ".to_string()),
                     Token::new(5, 10, TokenType::Word, "class".to_string()),
                     Token::new(10, 11, TokenType::Operator, "=".to_string()),
                     Token::new(11, 17, TokenType::String, r#""flex""#.to_string()),
-                    Token::new(17, 18, TokenType::Brace, ">".to_string()),
+                    Token::new(17, 18, TokenType::Operator, ">".to_string()),
                     Token::new(18, 19, TokenType::Brace, "{".to_string()),
                     Token::new(19, 20, TokenType::WhiteSpace, " ".to_string()),
                     Token::new(20, 24, TokenType::Word, "name".to_string()),
                     Token::new(24, 25, TokenType::WhiteSpace, " ".to_string()),
                     Token::new(25, 26, TokenType::Brace, "}".to_string()),
-                    Token::new(26, 28, TokenType::Brace, "</".to_string()),
+                    Token::new(26, 27, TokenType::Operator, "<".to_string()),
+                    Token::new(27, 28, TokenType::Operator, "/".to_string()),
                     Token::new(28, 31, TokenType::Word, "div".to_string()),
-                    Token::new(31, 32, TokenType::Brace, ">".to_string()),
+                    Token::new(31, 32, TokenType::Operator, ">".to_string()),
+                ],
+            ),
+            (
+                r#"let name = "jake";"#,
+                vec![
+                    Token::new(0, 3, TokenType::Keyword, "let".to_string()),
+                    Token::new(3, 4, TokenType::WhiteSpace, " ".to_string()),
+                    Token::new(4, 8, TokenType::Word, "name".to_string()),
+                    Token::new(8, 9, TokenType::WhiteSpace, " ".to_string()),
+                    Token::new(9, 10, TokenType::Operator, "=".to_string()),
+                    Token::new(10, 11, TokenType::WhiteSpace, " ".to_string()),
+                    Token::new(11, 17, TokenType::String, r#""jake""#.to_string()),
+                    Token::new(17, 18, TokenType::SemiColon, ";".to_string()),
                 ],
             ),
         ];
         for (input, expected) in tests {
-            let actual: Vec<Token> = repeat(1.., make_token)
-                .parse(LocatingSlice::new(input))
-                .unwrap();
+            let actual: Vec<Token> = parse_all(input).unwrap();
             assert_eq!(expected, actual);
         }
     }
