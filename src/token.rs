@@ -1,11 +1,19 @@
+use std::ops::Range;
 use winnow::{
     ascii::{alpha1, digit1, line_ending, multispace1},
-    combinator::{alt, dispatch, eof, peek, repeat},
+    combinator::{alt, dispatch, eof, peek, preceded, repeat},
+    error::{ErrMode, ErrorKind, ParserError},
     token::{any, one_of, take_till, take_until},
     LocatingSlice, PResult, Parser,
 };
 
-use std::ops::Range;
+const RUST_KEYWORDS: [&str; 48] = [
+    "fn", "struct", "enum", "trait", "impl", "type", "mod", "bool", "char", "i8", "i16", "i32",
+    "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64", "str", "isize", "usize", "let",
+    "mut", "const", "static", "ref", "move", "if", "else", "match", "loop", "while", "for",
+    "break", "continue", "return", "pub", "super", "self", "crate", "panic!", "Result", "Option",
+    "Some", "None",
+];
 
 #[derive(Debug, PartialEq, Eq)]
 struct Token {
@@ -61,12 +69,13 @@ fn make_token(i: &mut LocatingSlice<&str>) -> PResult<Token> {
         ':' => colon,
         ',' => comma,
         '.' => alt((double_period, period)),
-        '(' | '[' | '{' => brace_open,
-        ')' | ']' | '}' => brace_close,
+        '"' => string,
+        '(' | '[' | '{' | '<' => brace_open,
+        ')' | ']' | '}' | '>' => brace_close,
         '+' | '-' | '*' | '>' | '<' | '=' => operator,
         ' ' | '\t' | '\n' | '\r' => white_space,
         '0'..='9' => number,
-        'a'..='z' | 'A'..='Z' => word,
+        'a'..='z' | 'A'..='Z' => alt((keyword, word)),
         // This is definitely wrong
         _ => word,
     )
@@ -129,6 +138,18 @@ fn word(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     Ok(Token::from_range(range, TokenType::Word, value.to_string()))
 }
 
+fn keyword(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+    let mut token = word(i)?;
+    if RUST_KEYWORDS.contains(&token.value.as_str()) {
+        token.token_type = TokenType::Keyword;
+        return Ok(token);
+    }
+    Err(ErrMode::Backtrack(ParserError::from_error_kind(
+        i,
+        ErrorKind::Verify,
+    )))
+}
+
 fn number(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     let (value, range) = digit1.with_span().parse_next(i)?;
     Ok(Token::from_range(
@@ -160,7 +181,32 @@ fn line_comment(i: &mut LocatingSlice<&str>) -> PResult<Token> {
 }
 
 fn brace_open(i: &mut LocatingSlice<&str>) -> PResult<Token> {
-    let (value, range) = one_of(('{', '(', '[')).with_span().parse_next(i)?;
+    let next_char = peek(any).parse_next(i)?;
+    match next_char {
+        '<' => match peek(alt(("</", preceded("", alpha1)))).parse_next(i) {
+            Ok(_) => {
+                let (value, range) = alt(("</", "<")).with_span().parse_next(i)?;
+                Ok(Token::from_range(
+                    range,
+                    TokenType::Brace,
+                    value.to_string(),
+                ))
+            }
+            Err(e) => Err(e),
+        },
+        _ => {
+            let (value, range) = alt(("{", "(", "[")).with_span().parse_next(i)?;
+            Ok(Token::from_range(
+                range,
+                TokenType::Brace,
+                value.to_string(),
+            ))
+        }
+    }
+}
+
+fn brace_close(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+    let (value, range) = one_of(('}', ')', ']', '>')).with_span().parse_next(i)?;
     Ok(Token::from_range(
         range,
         TokenType::Brace,
@@ -168,11 +214,12 @@ fn brace_open(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     ))
 }
 
-fn brace_close(i: &mut LocatingSlice<&str>) -> PResult<Token> {
-    let (value, range) = one_of(('}', ')', ']')).with_span().parse_next(i)?;
+fn string(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+    let inner = ("\"", take_until(0.., "\""), "\"").take();
+    let (value, range) = inner.with_span().parse_next(i)?;
     Ok(Token::from_range(
         range,
-        TokenType::Brace,
+        TokenType::String,
         value.to_string(),
     ))
 }
@@ -325,6 +372,80 @@ mod tests {
     }
 
     #[test]
+    fn test_keyword() {
+        let tests = vec![
+            (
+                "let",
+                Token::new(0, 3, TokenType::Keyword, "let".to_string()),
+            ),
+            (
+                "struct",
+                Token::new(0, 6, TokenType::Keyword, "struct".to_string()),
+            ),
+        ];
+        for (input, expected) in tests {
+            let actual = keyword(&mut LocatingSlice::new(input)).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_keyword_fail() {
+        let tests = vec![(
+            "word",
+            Err(ErrMode::Backtrack(ParserError::from_error_kind(
+                &"word",
+                ErrorKind::Verify,
+            ))),
+        )];
+        for (input, expected) in tests {
+            let actual = keyword(&mut LocatingSlice::new(input));
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_string() {
+        let tests = vec![(
+            r#""let""#,
+            Token::new(0, 5, TokenType::String, r#""let""#.to_string()),
+        )];
+        for (input, expected) in tests {
+            let actual = string(&mut LocatingSlice::new(input)).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_open_brace() {
+        let tests = vec![
+            ("{", Token::new(0, 1, TokenType::Brace, "{".to_string())),
+            ("(", Token::new(0, 1, TokenType::Brace, "(".to_string())),
+            ("[", Token::new(0, 1, TokenType::Brace, "[".to_string())),
+            ("<", Token::new(0, 1, TokenType::Brace, "<".to_string())),
+            ("</", Token::new(0, 2, TokenType::Brace, "</".to_string())),
+        ];
+        for (input, expected) in tests {
+            let actual = brace_open(&mut LocatingSlice::new(input)).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_close_brace() {
+        let tests = vec![
+            ("}", Token::new(0, 1, TokenType::Brace, "}".to_string())),
+            (")", Token::new(0, 1, TokenType::Brace, ")".to_string())),
+            ("]", Token::new(0, 1, TokenType::Brace, "]".to_string())),
+            (">", Token::new(0, 1, TokenType::Brace, ">".to_string())),
+        ];
+        for (input, expected) in tests {
+            let actual = brace_close(&mut LocatingSlice::new(input)).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
     fn test_make_token() {
         let tests = vec![
             (
@@ -350,6 +471,26 @@ mod tests {
                     Token::new(2, 6, TokenType::Word, "name".to_string()),
                     Token::new(6, 7, TokenType::WhiteSpace, " ".to_string()),
                     Token::new(7, 8, TokenType::Brace, "}".to_string()),
+                ],
+            ),
+            (
+                r#"<div class="flex">{ name }</div>"#,
+                vec![
+                    Token::new(0, 1, TokenType::Brace, "<".to_string()),
+                    Token::new(1, 4, TokenType::Word, "div".to_string()),
+                    Token::new(4, 5, TokenType::WhiteSpace, " ".to_string()),
+                    Token::new(5, 10, TokenType::Word, "class".to_string()),
+                    Token::new(10, 11, TokenType::Operator, "=".to_string()),
+                    Token::new(11, 17, TokenType::String, r#""flex""#.to_string()),
+                    Token::new(17, 18, TokenType::Brace, ">".to_string()),
+                    Token::new(18, 19, TokenType::Brace, "{".to_string()),
+                    Token::new(19, 20, TokenType::WhiteSpace, " ".to_string()),
+                    Token::new(20, 24, TokenType::Word, "name".to_string()),
+                    Token::new(24, 25, TokenType::WhiteSpace, " ".to_string()),
+                    Token::new(25, 26, TokenType::Brace, "}".to_string()),
+                    Token::new(26, 28, TokenType::Brace, "</".to_string()),
+                    Token::new(28, 31, TokenType::Word, "div".to_string()),
+                    Token::new(31, 32, TokenType::Brace, ">".to_string()),
                 ],
             ),
         ];
