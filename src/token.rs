@@ -5,7 +5,7 @@ use winnow::{
     ascii::{alpha1, digit1, line_ending, multispace1},
     combinator::{alt, dispatch, eof, peek, repeat},
     error::{ContextError, ErrMode, ErrorKind, ParseError, ParserError},
-    stream::{Offset, Stream},
+    stream::{Offset, Stream, StreamIsPartial},
     token::{any, one_of, take_till, take_until},
     LocatingSlice, PResult, Parser,
 };
@@ -19,15 +19,15 @@ const RUST_KEYWORDS: [&str; 48] = [
 ];
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-struct Token {
-    start: usize,
-    end: usize,
-    token_type: TokenType,
-    value: String,
+pub(crate) struct Token {
+    pub start: usize,
+    pub end: usize,
+    pub token_type: TokenType,
+    pub value: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-enum TokenType {
+pub(crate) enum TokenType {
     Number,
     Word,
     Operator,
@@ -47,7 +47,7 @@ enum TokenType {
 }
 
 impl Token {
-    fn new(start: usize, end: usize, token_type: TokenType, value: String) -> Self {
+    pub(crate) fn new(start: usize, end: usize, token_type: TokenType, value: String) -> Self {
         Token {
             start,
             end,
@@ -66,11 +66,23 @@ impl Token {
     }
 }
 
-#[derive(Debug)]
-struct TokenStream {
-    tokens: Vec<Token>,
-    start: usize,
-    end: usize,
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) struct TokenStream {
+    pub tokens: Vec<Token>,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl StreamIsPartial for TokenStream {
+    type PartialState = ();
+
+    fn restore_partial(&mut self, _: Self::PartialState) {}
+
+    fn complete(&mut self) -> Self::PartialState {}
+
+    fn is_partial_supported() -> bool {
+        false
+    }
 }
 
 impl TokenStream {
@@ -91,7 +103,7 @@ impl TokenStream {
 }
 
 #[derive(Debug, Clone)]
-struct Checkpoint(usize, usize);
+pub(crate) struct Checkpoint(usize, usize);
 
 impl Offset for Checkpoint {
     fn offset_from(&self, start: &Self) -> usize {
@@ -99,11 +111,11 @@ impl Offset for Checkpoint {
     }
 }
 
-// impl Offset for TokenStream {
-//     fn offset_from(&self, start: &Self) -> usize {
-//         start.start - self.start
-//     }
-// }
+impl Offset for TokenStream {
+    fn offset_from(&self, start: &Self) -> usize {
+        start.start - self.start
+    }
+}
 
 impl Offset<Checkpoint> for TokenStream {
     fn offset_from(&self, start: &Checkpoint) -> usize {
@@ -266,7 +278,7 @@ fn inner_word(i: &mut LocatingSlice<&str>) -> PResult<()> {
     Ok(())
 }
 
-fn word(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+pub(crate) fn word(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     let (value, range) = inner_word.take().with_span().parse_next(i)?;
     Ok(Token::from_range(range, TokenType::Word, value.to_string()))
 }
@@ -292,7 +304,7 @@ fn number(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     ))
 }
 
-fn operator(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+pub(crate) fn operator(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     let (value, range) = alt(("+", "-", "*", "/", ">=", "<=", ">", "<", "="))
         .with_span()
         .parse_next(i)?;
@@ -331,7 +343,7 @@ fn brace_close(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     ))
 }
 
-fn string(i: &mut LocatingSlice<&str>) -> PResult<Token> {
+pub(crate) fn string(i: &mut LocatingSlice<&str>) -> PResult<Token> {
     let inner = ("\"", take_until(0.., "\""), "\"").take();
     let (value, range) = inner.with_span().parse_next(i)?;
     Ok(Token::from_range(
