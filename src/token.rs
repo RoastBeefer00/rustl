@@ -158,11 +158,12 @@ impl Stream for TokenStream {
     }
 
     fn next_token(&mut self) -> Option<Self::Token> {
-        let token = self.tokens.iter().next();
-        self.start += 1;
-        match token {
-            Some(token) => Some(token.clone()),
-            None => None,
+        if self.start < self.tokens.len() {
+            let token = self.tokens[self.start].clone();
+            self.start += 1;
+            Some(token)
+        } else {
+            None
         }
     }
 
@@ -173,8 +174,9 @@ impl Stream for TokenStream {
     fn next_slice(&mut self, offset: usize) -> Self::Slice {
         let next = TokenStream {
             tokens: self.tokens.clone(),
-            start: self.start,
-            end: self.start + offset,
+            start: self.start + offset,
+            // end: self.start + offset,
+            end: self.end,
         };
         self.start += offset;
         next
@@ -190,7 +192,9 @@ impl IntoIterator for TokenStream {
     }
 }
 
-fn parse_all(i: &str) -> Result<Vec<Token>, ParseError<LocatingSlice<&str>, ContextError>> {
+pub(crate) fn parse_all(
+    i: &str,
+) -> Result<Vec<Token>, ParseError<LocatingSlice<&str>, ContextError>> {
     match repeat(0.., make_token).parse(LocatingSlice::new(i)) {
         Ok(tokens) => Ok(tokens),
         Err(e) => Err(e),
