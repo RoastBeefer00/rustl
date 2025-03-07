@@ -11,14 +11,48 @@ use winnow::{
     token::{any, one_of, take_till},
 };
 
-use crate::node::Node;
+use crate::node::{Expr, Node};
 use crate::token::{parse_all, Token, TokenStream, TokenType};
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct Element {
+    pub tag: Tag,
+    pub children: Option<Vec<Node>>,
+}
+
+impl Element {
+    fn new(tag: Tag, children: Option<Vec<Node>>) -> Self {
+        Self { tag, children }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub(crate) struct Tag {
     pub name: String,
-    pub attributes: Vec<Attribute>,
-    pub children: Vec<Node>,
-    pub tag_type: TagType,
+    pub attributes: Option<Vec<Attribute>>,
+    pub self_closing: bool,
+}
+
+impl Tag {
+    fn new(name: String, attributes: Option<Vec<Attribute>>, self_closing: bool) -> Self {
+        Self {
+            name,
+            attributes,
+            self_closing,
+        }
+    }
+
+    fn is_self_closing(&self) -> bool {
+        self.self_closing
+    }
+
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_attributes(&self) -> Option<&Vec<Attribute>> {
+        self.attributes.as_ref()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,41 +67,47 @@ impl Attribute {
     }
 }
 
-pub(crate) enum TagType {
-    Start,
-    End,
-    SelfClosing,
-}
-
+// Helpers
 fn whitespace(i: &mut TokenStream) -> PResult<Token> {
     any.verify(|t: &Token| t.token_type == TokenType::WhiteSpace)
         .context(winnow::error::StrContext::Label("expected whitespace"))
         .parse_next(i)
 }
 
-fn attribute(i: &mut TokenStream) -> PResult<Attribute> {
-    let key = word(i)?.value;
-    let mut value = None;
-    if let Some(_) = opt(equals).parse_next(i)? {
-        value = Some(string(i)?.value);
-    };
-    // equals(i)?;
-    // let value = string(i)?.value;
-
-    Ok(Attribute { key, value })
+fn brace(i: &mut TokenStream) -> PResult<Token> {
+    any.verify(|t: &Token| t.token_type == TokenType::Brace)
+        .context(winnow::error::StrContext::Label("expected brace"))
+        .parse_next(i)
 }
 
-fn attributes(i: &mut TokenStream) -> PResult<Vec<Attribute>> {
-    separated(0.., attribute, whitespace).parse_next(i)
+fn operator(i: &mut TokenStream) -> PResult<Token> {
+    any.verify(|t: &Token| t.token_type == TokenType::Operator)
+        .context(winnow::error::StrContext::Label("expected operator"))
+        .parse_next(i)
 }
 
 fn equals(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| {
-        println!("Eq: {:?}", t);
-        t.token_type == TokenType::Operator && t.value == "="
-    })
-    .context(winnow::error::StrContext::Label("expected equals"))
-    .parse_next(i)
+    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "=")
+        .context(winnow::error::StrContext::Label("expected equals"))
+        .parse_next(i)
+}
+
+fn tag_open(i: &mut TokenStream) -> PResult<Token> {
+    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "<")
+        .context(winnow::error::StrContext::Label("expected tag open"))
+        .parse_next(i)
+}
+
+fn tag_close(i: &mut TokenStream) -> PResult<Token> {
+    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == ">")
+        .context(winnow::error::StrContext::Label("expected tag close"))
+        .parse_next(i)
+}
+
+fn slash(i: &mut TokenStream) -> PResult<Token> {
+    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "/")
+        .context(winnow::error::StrContext::Label("expected slash"))
+        .parse_next(i)
 }
 
 fn word(i: &mut TokenStream) -> PResult<Token> {
@@ -80,6 +120,86 @@ fn string(i: &mut TokenStream) -> PResult<Token> {
     any.verify(|t: &Token| t.token_type == TokenType::String)
         .context(winnow::error::StrContext::Label("expected string"))
         .parse_next(i)
+}
+
+// Builders
+fn attribute(i: &mut TokenStream) -> PResult<Attribute> {
+    let key = word(i)?.value;
+    let mut value = None;
+    if let Some(_) = opt(equals).parse_next(i)? {
+        value = Some(string(i)?.value);
+    };
+
+    Ok(Attribute { key, value })
+}
+
+fn attributes(i: &mut TokenStream) -> PResult<Vec<Attribute>> {
+    separated(0.., attribute, whitespace).parse_next(i)
+}
+
+fn opening_tag(i: &mut TokenStream) -> PResult<Tag> {
+    let _open = tag_open(i)?;
+    let name = word(i)?.value;
+    let _ = opt(whitespace).parse_next(i)?;
+    let attributes = opt(attributes).parse_next(i)?;
+    let self_closing = opt(slash).parse_next(i)?.is_some();
+    let _close = tag_close(i)?;
+    // if !self_closing {
+    //     let _ = tag_open(i)?;
+    //     let _ = word(i)?;
+    //     let _ = slash(i)?;
+    //     let _ = tag_close(i)?;
+    // }
+    Ok(Tag {
+        name,
+        attributes,
+        self_closing,
+    })
+}
+
+fn closing_tag(i: &mut TokenStream) -> PResult<Tag> {
+    let _open = tag_open(i)?;
+    let _ = slash(i)?;
+    let name = word(i)?.value;
+    let _ = tag_close(i)?;
+    Ok(Tag {
+        name,
+        attributes: None,
+        self_closing: true,
+    })
+}
+
+fn element(i: &mut TokenStream) -> PResult<Node> {
+    let start = i.start;
+    let opening_tag = opening_tag(i)?;
+    let children = if !opening_tag.is_self_closing() {
+        // TODO: Parse children
+        let children = Vec::new();
+        // let children = repeat(0.., Node, whitespace).parse_next(i)?;
+        Some(children)
+    } else {
+        None
+    };
+    if !opening_tag.is_self_closing() {
+        let _closing_tag = closing_tag(i)?;
+        // TODO: Check if opening and closing tags match
+        // if opening_tag.get_name() != closing_tag.get_name() {
+        //     return Err(winnow::error::StrError::new(
+        //         "opening and closing tags do not match",
+        //         ErrMode::Fatal,
+        //         StrContext::Label("element"),
+        //         StrContext::Value(StrContextValue::Token(closing_tag.get_name().to_string())),
+        //     ));
+        // }
+    }
+    Ok(Node {
+        start,
+        end: i.start - 1,
+        value: Expr::HtmlElement(Element {
+            tag: opening_tag,
+            children,
+        }),
+    })
 }
 
 #[cfg(test)]
@@ -180,4 +300,23 @@ mod tests {
             assert_eq!(expected, actual);
         }
     }
+
+    // #[test]
+    // fn test_element() {
+    //     let tests = vec![(
+    //         r#"<div></div>"#,
+    //         Node::new(
+    //             0,
+    //             11,
+    //             Expr::HtmlElement(Element::new(Tag::new("div".to_string(), None, false), None)),
+    //         ),
+    //     )];
+    //     for (input, expected) in tests {
+    //         let mut input = input;
+    //         let tokens = parse_all(&mut input).unwrap();
+    //         let mut stream = TokenStream::new(tokens);
+    //         let actual = element(&mut stream).unwrap();
+    //         assert_eq!(expected, actual);
+    //     }
+    // }
 }
