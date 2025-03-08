@@ -134,16 +134,21 @@ fn attribute(i: &mut TokenStream) -> PResult<Attribute> {
 }
 
 fn attributes(i: &mut TokenStream) -> PResult<Vec<Attribute>> {
-    separated(0.., attribute, whitespace).parse_next(i)
+    separated(1.., attribute, opt(whitespace)).parse_next(i)
 }
 
 fn opening_tag(i: &mut TokenStream) -> PResult<Tag> {
-    let _open = tag_open(i)?;
+    tag_open(i)?;
     let name = word(i)?.value;
-    let _ = opt(whitespace).parse_next(i)?;
+    opt(whitespace).parse_next(i)?;
     let attributes = opt(attributes).parse_next(i)?;
+    opt(whitespace).parse_next(i)?;
     let self_closing = opt(slash).parse_next(i)?.is_some();
-    let _close = tag_close(i)?;
+    println!(
+        "name: {}, attributes: {:?}, self_closing: {}",
+        name, attributes, self_closing
+    );
+    tag_close(i)?;
     // if !self_closing {
     //     let _ = tag_open(i)?;
     //     let _ = word(i)?;
@@ -159,9 +164,9 @@ fn opening_tag(i: &mut TokenStream) -> PResult<Tag> {
 
 fn closing_tag(i: &mut TokenStream) -> PResult<Tag> {
     let _open = tag_open(i)?;
-    let _ = slash(i)?;
+    slash(i)?;
     let name = word(i)?.value;
-    let _ = tag_close(i)?;
+    tag_close(i)?;
     Ok(Tag {
         name,
         attributes: None,
@@ -174,14 +179,16 @@ fn element(i: &mut TokenStream) -> PResult<Node> {
     let opening_tag = opening_tag(i)?;
     let children = if !opening_tag.is_self_closing() {
         // TODO: Parse children
-        let children = Vec::new();
+        // let children = Vec::new();
         // let children = repeat(0.., Node, whitespace).parse_next(i)?;
-        Some(children)
+        // Some(children)
+
+        None
     } else {
         None
     };
     if !opening_tag.is_self_closing() {
-        let _closing_tag = closing_tag(i)?;
+        closing_tag(i)?;
         // TODO: Check if opening and closing tags match
         // if opening_tag.get_name() != closing_tag.get_name() {
         //     return Err(winnow::error::StrError::new(
@@ -194,7 +201,7 @@ fn element(i: &mut TokenStream) -> PResult<Node> {
     }
     Ok(Node {
         start,
-        end: i.start - 1,
+        end: i.end,
         value: Expr::HtmlElement(Element {
             tag: opening_tag,
             children,
@@ -301,22 +308,74 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_element() {
-    //     let tests = vec![(
-    //         r#"<div></div>"#,
-    //         Node::new(
-    //             0,
-    //             11,
-    //             Expr::HtmlElement(Element::new(Tag::new("div".to_string(), None, false), None)),
-    //         ),
-    //     )];
-    //     for (input, expected) in tests {
-    //         let mut input = input;
-    //         let tokens = parse_all(&mut input).unwrap();
-    //         let mut stream = TokenStream::new(tokens);
-    //         let actual = element(&mut stream).unwrap();
-    //         assert_eq!(expected, actual);
-    //     }
-    // }
+    #[test]
+    fn test_element() {
+        let tests = vec![
+            (
+                r#"<div></div>"#,
+                Node::new(
+                    0,
+                    11,
+                    Expr::HtmlElement(Element::new(Tag::new("div".to_string(), None, false), None)),
+                ),
+            ),
+            (
+                r#"<div class="p-1 m-2"></div>"#,
+                Node::new(
+                    0,
+                    27,
+                    Expr::HtmlElement(Element::new(
+                        Tag::new(
+                            "div".to_string(),
+                            Some(vec![Attribute::new(
+                                "class".to_string(),
+                                Some(r#""p-1 m-2""#.to_string()),
+                            )]),
+                            false,
+                        ),
+                        None,
+                    )),
+                ),
+            ),
+            (
+                r#"<input />"#,
+                Node::new(
+                    0,
+                    9,
+                    Expr::HtmlElement(Element::new(
+                        Tag::new("input".to_string(), None, true),
+                        None,
+                    )),
+                ),
+            ),
+            (
+                r#"<input type="checkbox" />"#,
+                Node::new(
+                    0,
+                    33,
+                    Expr::HtmlElement(Element::new(
+                        Tag::new(
+                            "input".to_string(),
+                            Some(vec![
+                                Attribute::new(
+                                    "type".to_string(),
+                                    Some(r#""checkbox""#.to_string()),
+                                ),
+                                // Attribute::new("checked".to_string(), None),
+                            ]),
+                            true,
+                        ),
+                        None,
+                    )),
+                ),
+            ),
+        ];
+        for (input, expected) in tests {
+            let mut input = input;
+            let tokens = parse_all(&mut input).unwrap();
+            let mut stream = TokenStream::new(tokens);
+            let actual = element(&mut stream).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
 }
