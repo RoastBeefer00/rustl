@@ -87,13 +87,13 @@ impl StreamIsPartial for TokenStream {
 
 impl TokenStream {
     pub fn new(tokens: Vec<Token>) -> Self {
-        let first = tokens.first();
-        let last = tokens.last();
+        // let first = 0;
+        // let last = tokens.last();
 
         TokenStream {
             tokens: tokens.clone(),
-            start: first.unwrap().start,
-            end: last.unwrap().end,
+            start: 0,
+            end: tokens.len() - 1,
         }
     }
 

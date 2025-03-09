@@ -1,3 +1,4 @@
+use winnow::error::{ErrorKind, ParseError, ParserError};
 use winnow::PResult;
 
 use winnow::{
@@ -12,7 +13,69 @@ use winnow::{
 };
 
 use crate::node::{Expr, Node};
-use crate::token::{parse_all, Token, TokenStream, TokenType};
+use crate::token::{parse_all, Checkpoint, Token, TokenStream, TokenType};
+
+#[derive(Debug, Clone)]
+pub struct TokenError {
+    pub position: usize,
+    pub expected: String,
+    pub found: Option<Token>,
+}
+
+// Implement ParseError for your custom error type
+impl ParserError<TokenStream> for TokenError {
+    fn from_error_kind(input: &TokenStream, kind: ErrorKind) -> Self {
+        TokenError {
+            position: input.start,
+            expected: format!("{:?}", kind),
+            found: input.tokens.first().cloned(),
+        }
+    }
+
+    fn append(self, _input: &TokenStream, _checkpoint: &Checkpoint, _kind: ErrorKind) -> Self {
+        self
+    }
+}
+
+// Implement FromExternalError for context support
+impl<'a> winnow::error::FromExternalError<TokenStream, &'a str> for TokenError {
+    fn from_external_error(input: &TokenStream, _kind: ErrorKind, e: &'a str) -> Self {
+        TokenError {
+            position: input.start,
+            expected: e.to_string(),
+            found: input.tokens.first().cloned(),
+        }
+    }
+}
+
+// Type alias for your results
+pub type TokenResult<O> = PResult<O, TokenError>;
+
+fn expect_token<'a>(
+    token_type: TokenType,
+    value: Option<&'a str>,
+    error_msg: &'static str,
+) -> impl FnMut(&mut TokenStream) -> TokenResult<Token> + 'a {
+    move |i: &mut TokenStream| {
+        let current_pos = i.start;
+        let current_token = i.tokens.first().cloned();
+
+        match any
+            .verify(|t: &Token| {
+                t.token_type == token_type && (value.is_none() || t.value == value.unwrap())
+            })
+            .parse_next(i)
+        {
+            Ok(token) => Ok(token),
+            Err(ErrMode::Backtrack(_)) => Err(ErrMode::Backtrack(TokenError {
+                position: current_pos,
+                expected: error_msg.to_string(),
+                found: current_token,
+            })),
+            Err(other) => Err(other),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct Element {
@@ -68,87 +131,118 @@ impl Attribute {
 }
 
 // Helpers
-fn whitespace(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::WhiteSpace)
-        .context(winnow::error::StrContext::Label("expected whitespace"))
-        .parse_next(i)
+fn whitespace(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::WhiteSpace)
+    //     .context(winnow::error::StrContext::Label("expected whitespace"))
+    //     .parse_next(i)
+    expect_token(TokenType::WhiteSpace, None, "expected whitespace")(i)
 }
 
-fn brace(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Brace)
-        .context(winnow::error::StrContext::Label("expected brace"))
-        .parse_next(i)
+fn brace(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::Brace)
+    //     .context(winnow::error::StrContext::Label("expected brace"))
+    //     .parse_next(i)
+    expect_token(TokenType::Brace, None, "expected brace")(i)
 }
 
-fn operator(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Operator)
-        .context(winnow::error::StrContext::Label("expected operator"))
-        .parse_next(i)
+fn operator(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::Operator)
+    //     .context(winnow::error::StrContext::Label("expected operator"))
+    //     .parse_next(i)
+    expect_token(TokenType::Operator, None, "expected operator")(i)
 }
 
-fn equals(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "=")
-        .context(winnow::error::StrContext::Label("expected equals"))
-        .parse_next(i)
+fn equals(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "=")
+    //     .context(winnow::error::StrContext::Label("expected equals"))
+    //     .parse_next(i)
+    expect_token(TokenType::Operator, Some("="), "expected equals")(i)
 }
 
-fn tag_open(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "<")
-        .context(winnow::error::StrContext::Label("expected tag open"))
-        .parse_next(i)
+fn tag_open(i: &mut TokenStream) -> TokenResult<Token> {
+    // let current_position = i.start;
+    // let current_token = i.tokens.first().cloned();
+    // any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "<")
+    //     .context(winnow::error::StrContext::Label("expected tag open"))
+    //     .parse_next(i)
+    expect_token(TokenType::Operator, Some("<"), "expected tag open")(i)
 }
 
-fn tag_close(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == ">")
-        .context(winnow::error::StrContext::Label("expected tag close"))
-        .parse_next(i)
+fn tag_close(i: &mut TokenStream) -> TokenResult<Token> {
+    // let current_position = i.start;
+    // let current_token = i.tokens.first().cloned();
+    // match any
+    //     .verify(|t: &Token| t.token_type == TokenType::Operator && t.value == ">")
+    //     .parse_next(i)
+    // {
+    //     Ok(token) => Ok(token),
+    //     Err(ErrMode::Backtrack(_)) => Err(ErrMode::Backtrack(TokenError {
+    //         position: current_position,
+    //         expected: "expected tag close '>'".to_string(),
+    //         found: current_token,
+    //     })),
+    //     Err(other) => Err(other),
+    // }
+    expect_token(TokenType::Operator, Some(">"), "expected tag close '>'")(i)
 }
 
-fn slash(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "/")
-        .context(winnow::error::StrContext::Label("expected slash"))
-        .parse_next(i)
+fn slash(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "/")
+    //     .context(winnow::error::StrContext::Label("expected slash"))
+    //     .parse_next(i)
+    expect_token(TokenType::Operator, Some("/"), "expected slash")(i)
 }
 
-fn word(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::Word)
-        .context(winnow::error::StrContext::Label("expected word"))
-        .parse_next(i)
+fn word(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::Word)
+    //     .context(winnow::error::StrContext::Label("expected word"))
+    //     .parse_next(i)
+    expect_token(TokenType::Word, None, "expected word")(i)
 }
 
-fn string(i: &mut TokenStream) -> PResult<Token> {
-    any.verify(|t: &Token| t.token_type == TokenType::String)
-        .context(winnow::error::StrContext::Label("expected string"))
-        .parse_next(i)
+fn string(i: &mut TokenStream) -> TokenResult<Token> {
+    // any.verify(|t: &Token| t.token_type == TokenType::String)
+    //     .context(winnow::error::StrContext::Label("expected string"))
+    //     .parse_next(i)
+    expect_token(TokenType::String, None, "expected string")(i)
 }
 
 // Builders
-fn attribute(i: &mut TokenStream) -> PResult<Attribute> {
+fn attribute(i: &mut TokenStream) -> TokenResult<Attribute> {
     let key = word(i)?.value;
     let mut value = None;
     if let Some(_) = opt(equals).parse_next(i)? {
-        value = Some(string(i)?.value);
+        let string_token = string(i)?;
+        value = Some(string_token.value);
     };
 
     Ok(Attribute { key, value })
 }
 
-fn attributes(i: &mut TokenStream) -> PResult<Vec<Attribute>> {
-    separated(1.., attribute, opt(whitespace)).parse_next(i)
+fn attributes(i: &mut TokenStream) -> TokenResult<Vec<Attribute>> {
+    separated(1.., attribute, whitespace).parse_next(i)
+    // repeat(1.., preceded(whitespace, attribute)).parse_next(i)
 }
 
-fn opening_tag(i: &mut TokenStream) -> PResult<Tag> {
+fn opening_tag(i: &mut TokenStream) -> TokenResult<Tag> {
     tag_open(i)?;
+    println!("after tag_open:\n\tStart: {}", i.start);
     let name = word(i)?.value;
-    opt(whitespace).parse_next(i)?;
-    let attributes = opt(attributes).parse_next(i)?;
-    opt(whitespace).parse_next(i)?;
+    println!("after word:\n\tStart: {}", i.start);
+    // opt(whitespace).parse_next(i)?;
+    let mut attrs = None;
+    if let Some(_) = opt(whitespace).parse_next(i)? {
+        println!("after whitespace:\n\tStart: {}", i.start);
+        attrs = opt(attributes).parse_next(i)?;
+        println!("attrs: {:?}", attrs);
+        println!("after attributes:\n\tStart: {}", i.start);
+        opt(whitespace).parse_next(i)?;
+        println!("after whitespace:\n\tStart: {}", i.start);
+    }
     let self_closing = opt(slash).parse_next(i)?.is_some();
-    println!(
-        "name: {}, attributes: {:?}, self_closing: {}",
-        name, attributes, self_closing
-    );
+    println!("after slash:\n\tStart: {}", i.start);
     tag_close(i)?;
+    println!("after tag_close:\n\tStart: {}", i.start);
     // if !self_closing {
     //     let _ = tag_open(i)?;
     //     let _ = word(i)?;
@@ -157,12 +251,12 @@ fn opening_tag(i: &mut TokenStream) -> PResult<Tag> {
     // }
     Ok(Tag {
         name,
-        attributes,
+        attributes: attrs,
         self_closing,
     })
 }
 
-fn closing_tag(i: &mut TokenStream) -> PResult<Tag> {
+fn closing_tag(i: &mut TokenStream) -> TokenResult<Tag> {
     let _open = tag_open(i)?;
     slash(i)?;
     let name = word(i)?.value;
@@ -174,7 +268,7 @@ fn closing_tag(i: &mut TokenStream) -> PResult<Tag> {
     })
 }
 
-fn element(i: &mut TokenStream) -> PResult<Node> {
+fn element(i: &mut TokenStream) -> TokenResult<Node> {
     let start = i.start;
     let opening_tag = opening_tag(i)?;
     let children = if !opening_tag.is_self_closing() {
@@ -284,26 +378,46 @@ mod tests {
     #[test]
     fn test_attributes() {
         let tests = vec![
+            // (
+            //     r#"jake="true" checked"#,
+            //     vec![
+            //         Attribute::new("jake".to_string(), Some(r#""true""#.to_string())),
+            //         Attribute::new("checked".to_string(), None),
+            //     ],
+            // ),
             (
-                r#"checked="true""#,
-                Attribute::new("checked".to_string(), Some(r#""true""#.to_string())),
+                r#"jake="true" checked"#,
+                vec![
+                    Attribute::new("jake".to_string(), Some(r#""true""#.to_string())),
+                    Attribute::new("checked".to_string(), None),
+                ],
             ),
+            // (
+            //     r#"jake="true" class="p-1 m-2""#,
+            //     vec![
+            //         Attribute::new("checked".to_string(), Some(r#""true""#.to_string())),
+            //         Attribute::new("class".to_string(), Some(r#""p-1 m-2""#.to_string())),
+            //     ],
+            // ),
             (
                 r#"class="p-1""#,
-                Attribute::new("class".to_string(), Some(r#""p-1""#.to_string())),
+                vec![Attribute::new(
+                    "class".to_string(),
+                    Some(r#""p-1""#.to_string()),
+                )],
             ),
-            (
-                r#"class="p-1 m-2""#,
-                Attribute::new("class".to_string(), Some(r#""p-1 m-2""#.to_string())),
-            ),
-            ("checked", Attribute::new("checked".to_string(), None)),
-            ("selected", Attribute::new("selected".to_string(), None)),
+            // (
+            //     r#"class="p-1 m-2""#,
+            //     Attribute::new("class".to_string(), Some(r#""p-1 m-2""#.to_string())),
+            // ),
+            // ("checked", Attribute::new("checked".to_string(), None)),
+            // ("selected", Attribute::new("selected".to_string(), None)),
         ];
         for (input, expected) in tests {
             let mut input = input;
             let tokens = parse_all(&mut input).unwrap();
             let mut stream = TokenStream::new(tokens);
-            let actual = attribute(&mut stream).unwrap();
+            let actual = attributes(&mut stream).unwrap();
             assert_eq!(expected, actual);
         }
     }
