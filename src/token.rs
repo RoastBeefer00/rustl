@@ -1,11 +1,8 @@
-use std::iter::Enumerate;
 use std::ops::Range;
-use std::vec::IntoIter;
 use winnow::{
-    ascii::{alpha1, digit1, line_ending, multispace1},
-    combinator::{alt, dispatch, eof, peek, repeat},
+    ascii::{digit1, multispace1},
+    combinator::{alt, dispatch, peek, repeat},
     error::{ContextError, ErrMode, ErrorKind, ParseError, ParserError},
-    stream::{Offset, Stream, StreamIsPartial},
     token::{any, one_of, take_till, take_until},
     LocatingSlice, PResult, Parser,
 };
@@ -63,132 +60,6 @@ impl Token {
             token_type,
             value,
         }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct TokenStream {
-    pub tokens: Vec<Token>,
-    pub start: usize,
-    pub end: usize,
-}
-
-impl StreamIsPartial for TokenStream {
-    type PartialState = ();
-
-    fn restore_partial(&mut self, _: Self::PartialState) {}
-
-    fn complete(&mut self) -> Self::PartialState {}
-
-    fn is_partial_supported() -> bool {
-        false
-    }
-}
-
-impl TokenStream {
-    pub fn new(tokens: Vec<Token>) -> Self {
-        // let first = 0;
-        // let last = tokens.last();
-
-        TokenStream {
-            tokens: tokens.clone(),
-            start: 0,
-            end: tokens.len() - 1,
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Token> {
-        self.tokens.iter()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Checkpoint(usize, usize);
-
-impl Offset for Checkpoint {
-    fn offset_from(&self, start: &Self) -> usize {
-        start.0 - self.0
-    }
-}
-
-impl Offset for TokenStream {
-    fn offset_from(&self, start: &Self) -> usize {
-        start.start - self.start
-    }
-}
-
-impl Offset<Checkpoint> for TokenStream {
-    fn offset_from(&self, start: &Checkpoint) -> usize {
-        start.0 - self.start
-    }
-}
-
-impl Stream for TokenStream {
-    type Token = Token;
-    type Slice = Self;
-    type IterOffsets = Enumerate<std::vec::IntoIter<Token>>;
-    type Checkpoint = Checkpoint;
-
-    fn iter_offsets(&self) -> Self::IterOffsets {
-        return self.tokens.to_vec().into_iter().enumerate();
-    }
-
-    fn eof_offset(&self) -> usize {
-        self.end
-    }
-
-    fn raw(&self) -> &dyn std::fmt::Debug {
-        self
-    }
-
-    fn offset_for<P>(&self, predicate: P) -> Option<usize>
-    where
-        P: Fn(Self::Token) -> bool,
-    {
-        self.iter().position(|b| predicate(b.clone()))
-    }
-
-    fn reset(&mut self, checkpoint: &Self::Checkpoint) {
-        self.start = checkpoint.0;
-        self.end = checkpoint.1;
-    }
-
-    fn offset_at(&self, tokens: usize) -> Result<usize, winnow::error::Needed> {
-        Ok(tokens - self.start)
-    }
-
-    fn next_token(&mut self) -> Option<Self::Token> {
-        if self.start < self.tokens.len() {
-            let token = self.tokens[self.start].clone();
-            self.start += 1;
-            Some(token)
-        } else {
-            None
-        }
-    }
-
-    fn checkpoint(&self) -> Self::Checkpoint {
-        Checkpoint(self.start, self.end)
-    }
-
-    fn next_slice(&mut self, offset: usize) -> Self::Slice {
-        let next = TokenStream {
-            tokens: self.tokens.clone(),
-            start: self.start + offset,
-            // end: self.start + offset,
-            end: self.end,
-        };
-        self.start += offset;
-        next
-    }
-}
-
-impl IntoIterator for TokenStream {
-    type Item = Token;
-    type IntoIter = IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.tokens.into_iter()
     }
 }
 

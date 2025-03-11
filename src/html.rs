@@ -1,79 +1,59 @@
-use winnow::error::{ErrorKind, ParseError, ParserError};
 use winnow::PResult;
 
 use winnow::{
-    combinator::{
-        alt, delimited, opt, peek, preceded, repeat, separated, separated_pair, terminated,
-    },
-    dispatch,
-    error::{ErrMode, StrContext, StrContextValue},
+    combinator::{alt, opt, separated},
     prelude::*,
-    stream::Stream,
-    token::{any, one_of, take_till},
+    token::any,
 };
 
 use crate::node::{Expr, Node};
-use crate::token::{parse_all, Checkpoint, Token, TokenStream, TokenType};
+use crate::token::{Token, TokenType};
 
-#[derive(Debug, Clone)]
-pub struct TokenError {
-    pub position: usize,
-    pub expected: String,
-    pub found: Option<Token>,
-}
+// #[derive(Debug, Clone)]
+// pub struct TokenError {
+//     // pub position: usize,
+//     pub expected: String,
+//     pub found: Option<Token>,
+// }
 
 // Implement ParseError for your custom error type
-impl ParserError<TokenStream> for TokenError {
-    fn from_error_kind(input: &TokenStream, kind: ErrorKind) -> Self {
-        TokenError {
-            position: input.start,
-            expected: format!("{:?}", kind),
-            found: input.tokens.first().cloned(),
-        }
-    }
-
-    fn append(self, _input: &TokenStream, _checkpoint: &Checkpoint, _kind: ErrorKind) -> Self {
-        self
-    }
-}
+// impl ParserError<&[Token]> for TokenError {
+//     fn from_error_kind(input: &mut &[Token], kind: ErrorKind) -> Self {
+//         TokenError {
+//             // position: input.start,
+//             expected: format!("{:?}", kind),
+//             found: input.first().cloned(),
+//         }
+//     }
+//
+//     fn append(self, _input: &&[Token], _checkpoint: &Checkpoint, _kind: ErrorKind) -> Self {
+//         self
+//     }
+// }
 
 // Implement FromExternalError for context support
-impl<'a> winnow::error::FromExternalError<TokenStream, &'a str> for TokenError {
-    fn from_external_error(input: &TokenStream, _kind: ErrorKind, e: &'a str) -> Self {
-        TokenError {
-            position: input.start,
-            expected: e.to_string(),
-            found: input.tokens.first().cloned(),
-        }
-    }
-}
+// impl<'a> winnow::error::FromExternalError<&[Token], &'a str> for TokenError {
+//     fn from_external_error(input: &&[Token], _kind: ErrorKind, e: &'a str) -> Self {
+//         TokenError {
+//             // position: input.start,
+//             expected: e.to_string(),
+//             found: input.first().cloned(),
+//         }
+//     }
+// }
 
 // Type alias for your results
-pub type TokenResult<O> = PResult<O, TokenError>;
+// pub type PResult<O> = PResult<O, TokenError>;
 
 fn expect_token<'a>(
     token_type: TokenType,
     value: Option<&'a str>,
-    error_msg: &'static str,
-) -> impl FnMut(&mut TokenStream) -> TokenResult<Token> + 'a {
-    move |i: &mut TokenStream| {
-        let current_pos = i.start;
-        let current_token = i.tokens.first().cloned();
-
-        match any
-            .verify(|t: &Token| {
-                t.token_type == token_type && (value.is_none() || t.value == value.unwrap())
-            })
-            .parse_next(i)
-        {
-            Ok(token) => Ok(token),
-            Err(ErrMode::Backtrack(_)) => Err(ErrMode::Backtrack(TokenError {
-                position: current_pos,
-                expected: error_msg.to_string(),
-                found: current_token,
-            })),
-            Err(other) => Err(other),
-        }
+) -> impl FnMut(&mut &[Token]) -> PResult<Token> + 'a {
+    move |i: &mut &[Token]| {
+        any.verify(|t: &Token| {
+            t.token_type == token_type && (value.is_none() || t.value == value.unwrap())
+        })
+        .parse_next(i)
     }
 }
 
@@ -131,85 +111,49 @@ impl Attribute {
 }
 
 // Helpers
-fn whitespace(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::WhiteSpace)
-    //     .context(winnow::error::StrContext::Label("expected whitespace"))
-    //     .parse_next(i)
-    expect_token(TokenType::WhiteSpace, None, "expected whitespace")(i)
+fn whitespace(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::WhiteSpace, None)(i)
 }
 
-fn brace(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::Brace)
-    //     .context(winnow::error::StrContext::Label("expected brace"))
-    //     .parse_next(i)
-    expect_token(TokenType::Brace, None, "expected brace")(i)
+fn brace(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Brace, None)(i)
 }
 
-fn operator(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::Operator)
-    //     .context(winnow::error::StrContext::Label("expected operator"))
-    //     .parse_next(i)
-    expect_token(TokenType::Operator, None, "expected operator")(i)
+fn operator(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Operator, None)(i)
 }
 
-fn equals(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "=")
-    //     .context(winnow::error::StrContext::Label("expected equals"))
-    //     .parse_next(i)
-    expect_token(TokenType::Operator, Some("="), "expected equals")(i)
+fn equals(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Operator, Some("="))(i)
 }
 
-fn tag_open(i: &mut TokenStream) -> TokenResult<Token> {
-    // let current_position = i.start;
-    // let current_token = i.tokens.first().cloned();
-    // any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "<")
-    //     .context(winnow::error::StrContext::Label("expected tag open"))
-    //     .parse_next(i)
-    expect_token(TokenType::Operator, Some("<"), "expected tag open")(i)
+fn tag_open(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Operator, Some("<"))(i)
 }
 
-fn tag_close(i: &mut TokenStream) -> TokenResult<Token> {
-    // let current_position = i.start;
-    // let current_token = i.tokens.first().cloned();
-    // match any
-    //     .verify(|t: &Token| t.token_type == TokenType::Operator && t.value == ">")
-    //     .parse_next(i)
-    // {
-    //     Ok(token) => Ok(token),
-    //     Err(ErrMode::Backtrack(_)) => Err(ErrMode::Backtrack(TokenError {
-    //         position: current_position,
-    //         expected: "expected tag close '>'".to_string(),
-    //         found: current_token,
-    //     })),
-    //     Err(other) => Err(other),
-    // }
-    expect_token(TokenType::Operator, Some(">"), "expected tag close '>'")(i)
+fn tag_close(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Operator, Some(">"))(i)
 }
 
-fn slash(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::Operator && t.value == "/")
-    //     .context(winnow::error::StrContext::Label("expected slash"))
-    //     .parse_next(i)
-    expect_token(TokenType::Operator, Some("/"), "expected slash")(i)
+fn slash(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Operator, Some("/"))(i)
 }
 
-fn word(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::Word)
-    //     .context(winnow::error::StrContext::Label("expected word"))
-    //     .parse_next(i)
-    expect_token(TokenType::Word, None, "expected word")(i)
+fn word(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Word, None)(i)
 }
 
-fn string(i: &mut TokenStream) -> TokenResult<Token> {
-    // any.verify(|t: &Token| t.token_type == TokenType::String)
-    //     .context(winnow::error::StrContext::Label("expected string"))
-    //     .parse_next(i)
-    expect_token(TokenType::String, None, "expected string")(i)
+fn keyword(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::Keyword, None)(i)
+}
+
+fn string(i: &mut &[Token]) -> PResult<Token> {
+    expect_token(TokenType::String, None)(i)
 }
 
 // Builders
-fn attribute(i: &mut TokenStream) -> TokenResult<Attribute> {
-    let key = word(i)?.value;
+fn attribute(i: &mut &[Token]) -> PResult<Attribute> {
+    let key = alt((keyword, word)).parse_next(i)?.value;
     let mut value = None;
     if let Some(_) = opt(equals).parse_next(i)? {
         let string_token = string(i)?;
@@ -219,30 +163,24 @@ fn attribute(i: &mut TokenStream) -> TokenResult<Attribute> {
     Ok(Attribute { key, value })
 }
 
-fn attributes(i: &mut TokenStream) -> TokenResult<Vec<Attribute>> {
+fn attributes(i: &mut &[Token]) -> PResult<Vec<Attribute>> {
     separated(1.., attribute, whitespace).parse_next(i)
     // repeat(1.., preceded(whitespace, attribute)).parse_next(i)
 }
 
-fn opening_tag(i: &mut TokenStream) -> TokenResult<Tag> {
+fn opening_tag(i: &mut &[Token]) -> PResult<Tag> {
+    println!("{:?}", i);
     tag_open(i)?;
-    println!("after tag_open:\n\tStart: {}", i.start);
     let name = word(i)?.value;
-    println!("after word:\n\tStart: {}", i.start);
     // opt(whitespace).parse_next(i)?;
     let mut attrs = None;
     if let Some(_) = opt(whitespace).parse_next(i)? {
-        println!("after whitespace:\n\tStart: {}", i.start);
         attrs = opt(attributes).parse_next(i)?;
-        println!("attrs: {:?}", attrs);
-        println!("after attributes:\n\tStart: {}", i.start);
         opt(whitespace).parse_next(i)?;
-        println!("after whitespace:\n\tStart: {}", i.start);
     }
+    println!("{:?}", attrs);
     let self_closing = opt(slash).parse_next(i)?.is_some();
-    println!("after slash:\n\tStart: {}", i.start);
     tag_close(i)?;
-    println!("after tag_close:\n\tStart: {}", i.start);
     // if !self_closing {
     //     let _ = tag_open(i)?;
     //     let _ = word(i)?;
@@ -256,7 +194,7 @@ fn opening_tag(i: &mut TokenStream) -> TokenResult<Tag> {
     })
 }
 
-fn closing_tag(i: &mut TokenStream) -> TokenResult<Tag> {
+fn closing_tag(i: &mut &[Token]) -> PResult<Tag> {
     let _open = tag_open(i)?;
     slash(i)?;
     let name = word(i)?.value;
@@ -268,8 +206,7 @@ fn closing_tag(i: &mut TokenStream) -> TokenResult<Tag> {
     })
 }
 
-fn element(i: &mut TokenStream) -> TokenResult<Node> {
-    let start = i.start;
+fn element(i: &mut &[Token]) -> PResult<Expr> {
     let opening_tag = opening_tag(i)?;
     let children = if !opening_tag.is_self_closing() {
         // TODO: Parse children
@@ -293,58 +230,44 @@ fn element(i: &mut TokenStream) -> TokenResult<Node> {
         //     ));
         // }
     }
-    Ok(Node {
-        start,
-        end: i.end,
-        value: Expr::HtmlElement(Element {
-            tag: opening_tag,
-            children,
-        }),
-    })
+    Ok(Expr::HtmlElement(Element {
+        tag: opening_tag,
+        children,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::token::parse_all;
+
     use super::*;
 
     #[test]
     fn test_equals() {
-        let mut input = TokenStream {
-            tokens: vec![Token::new(0, 1, TokenType::Operator, "=".to_string())],
-            start: 0,
-            end: 1,
-        };
+        let input = vec![Token::new(0, 1, TokenType::Operator, "=".to_string())];
         let expected = Token::new(0, 1, TokenType::Operator, "=".to_string());
-        let actual = equals(&mut input).unwrap();
+        let actual = equals(&mut input.as_slice()).unwrap();
         assert_eq!(expected, actual);
     }
 
     #[test]
     fn test_word() {
-        let mut input = TokenStream {
-            tokens: vec![Token::new(0, 4, TokenType::Word, "class".to_string())],
-            start: 0,
-            end: 4,
-        };
+        let input = vec![Token::new(0, 4, TokenType::Word, "class".to_string())];
         let expected = Token::new(0, 4, TokenType::Word, "class".to_string());
-        let actual = word(&mut input).unwrap();
+        let actual = word(&mut input.as_slice()).unwrap();
         assert_eq!(expected, actual);
     }
 
     #[test]
     fn test_string() {
-        let mut input = TokenStream {
-            tokens: vec![Token::new(
-                0,
-                8,
-                TokenType::String,
-                r#""p-1 m-2""#.to_string(),
-            )],
-            start: 0,
-            end: 4,
-        };
+        let input = vec![Token::new(
+            0,
+            8,
+            TokenType::String,
+            r#""p-1 m-2""#.to_string(),
+        )];
         let expected = Token::new(0, 8, TokenType::String, r#""p-1 m-2""#.to_string());
-        let actual = string(&mut input).unwrap();
+        let actual = string(&mut input.as_slice()).unwrap();
         assert_eq!(expected, actual);
     }
 
@@ -369,8 +292,7 @@ mod tests {
         for (input, expected) in tests {
             let mut input = input;
             let tokens = parse_all(&mut input).unwrap();
-            let mut stream = TokenStream::new(tokens);
-            let actual = attribute(&mut stream).unwrap();
+            let actual = attribute(&mut tokens.as_slice()).unwrap();
             assert_eq!(expected, actual);
         }
     }
@@ -378,13 +300,6 @@ mod tests {
     #[test]
     fn test_attributes() {
         let tests = vec![
-            // (
-            //     r#"jake="true" checked"#,
-            //     vec![
-            //         Attribute::new("jake".to_string(), Some(r#""true""#.to_string())),
-            //         Attribute::new("checked".to_string(), None),
-            //     ],
-            // ),
             (
                 r#"jake="true" checked"#,
                 vec![
@@ -392,13 +307,20 @@ mod tests {
                     Attribute::new("checked".to_string(), None),
                 ],
             ),
-            // (
-            //     r#"jake="true" class="p-1 m-2""#,
-            //     vec![
-            //         Attribute::new("checked".to_string(), Some(r#""true""#.to_string())),
-            //         Attribute::new("class".to_string(), Some(r#""p-1 m-2""#.to_string())),
-            //     ],
-            // ),
+            (
+                r#"jake="true" checked"#,
+                vec![
+                    Attribute::new("jake".to_string(), Some(r#""true""#.to_string())),
+                    Attribute::new("checked".to_string(), None),
+                ],
+            ),
+            (
+                r#"checked="true" class="p-1 m-2""#,
+                vec![
+                    Attribute::new("checked".to_string(), Some(r#""true""#.to_string())),
+                    Attribute::new("class".to_string(), Some(r#""p-1 m-2""#.to_string())),
+                ],
+            ),
             (
                 r#"class="p-1""#,
                 vec![Attribute::new(
@@ -406,18 +328,58 @@ mod tests {
                     Some(r#""p-1""#.to_string()),
                 )],
             ),
-            // (
-            //     r#"class="p-1 m-2""#,
-            //     Attribute::new("class".to_string(), Some(r#""p-1 m-2""#.to_string())),
-            // ),
-            // ("checked", Attribute::new("checked".to_string(), None)),
-            // ("selected", Attribute::new("selected".to_string(), None)),
         ];
         for (input, expected) in tests {
             let mut input = input;
             let tokens = parse_all(&mut input).unwrap();
-            let mut stream = TokenStream::new(tokens);
-            let actual = attributes(&mut stream).unwrap();
+            let actual = attributes(&mut tokens.as_slice()).unwrap();
+            assert_eq!(expected, actual);
+        }
+    }
+
+    #[test]
+    fn test_open_tag() {
+        let tests = vec![
+            (r#"<div>"#, Tag::new("div".to_string(), None, false)),
+            (
+                r#"<div class="bg-red">"#,
+                Tag::new(
+                    "div".to_string(),
+                    Some(vec![Attribute::new(
+                        "class".to_string(),
+                        Some(r#""bg-red""#.to_string()),
+                    )]),
+                    false,
+                ),
+            ),
+            (
+                r#"<div class="p-1 m-2">"#,
+                Tag::new(
+                    "div".to_string(),
+                    Some(vec![Attribute::new(
+                        "class".to_string(),
+                        Some(r#""p-1 m-2""#.to_string()),
+                    )]),
+                    false,
+                ),
+            ),
+            (
+                r#"<input type="checkbox" checked/>"#,
+                Tag::new(
+                    "input".to_string(),
+                    Some(vec![
+                        Attribute::new("type".to_string(), Some(r#""checkbox""#.to_string())),
+                        Attribute::new("checked".to_string(), None),
+                    ]),
+                    true,
+                ),
+            ),
+            (r#"<input />"#, Tag::new("input".to_string(), None, true)),
+        ];
+        for (input, expected) in tests {
+            let mut input = input;
+            let tokens = parse_all(&mut input).unwrap();
+            let actual = opening_tag(&mut tokens.as_slice()).unwrap();
             assert_eq!(expected, actual);
         }
     }
@@ -427,68 +389,48 @@ mod tests {
         let tests = vec![
             (
                 r#"<div></div>"#,
-                Node::new(
-                    0,
-                    11,
-                    Expr::HtmlElement(Element::new(Tag::new("div".to_string(), None, false), None)),
-                ),
+                Expr::HtmlElement(Element::new(Tag::new("div".to_string(), None, false), None)),
             ),
             (
                 r#"<div class="p-1 m-2"></div>"#,
-                Node::new(
-                    0,
-                    27,
-                    Expr::HtmlElement(Element::new(
-                        Tag::new(
-                            "div".to_string(),
-                            Some(vec![Attribute::new(
-                                "class".to_string(),
-                                Some(r#""p-1 m-2""#.to_string()),
-                            )]),
-                            false,
-                        ),
-                        None,
-                    )),
-                ),
+                Expr::HtmlElement(Element::new(
+                    Tag::new(
+                        "div".to_string(),
+                        Some(vec![Attribute::new(
+                            "class".to_string(),
+                            Some(r#""p-1 m-2""#.to_string()),
+                        )]),
+                        false,
+                    ),
+                    None,
+                )),
             ),
             (
                 r#"<input />"#,
-                Node::new(
-                    0,
-                    9,
-                    Expr::HtmlElement(Element::new(
-                        Tag::new("input".to_string(), None, true),
-                        None,
-                    )),
-                ),
+                Expr::HtmlElement(Element::new(
+                    Tag::new("input".to_string(), None, true),
+                    None,
+                )),
             ),
             (
-                r#"<input type="checkbox" />"#,
-                Node::new(
-                    0,
-                    33,
-                    Expr::HtmlElement(Element::new(
-                        Tag::new(
-                            "input".to_string(),
-                            Some(vec![
-                                Attribute::new(
-                                    "type".to_string(),
-                                    Some(r#""checkbox""#.to_string()),
-                                ),
-                                // Attribute::new("checked".to_string(), None),
-                            ]),
-                            true,
-                        ),
-                        None,
-                    )),
-                ),
+                r#"<input type="checkbox" checked/>"#,
+                Expr::HtmlElement(Element::new(
+                    Tag::new(
+                        "input".to_string(),
+                        Some(vec![
+                            Attribute::new("type".to_string(), Some(r#""checkbox""#.to_string())),
+                            Attribute::new("checked".to_string(), None),
+                        ]),
+                        true,
+                    ),
+                    None,
+                )),
             ),
         ];
         for (input, expected) in tests {
             let mut input = input;
             let tokens = parse_all(&mut input).unwrap();
-            let mut stream = TokenStream::new(tokens);
-            let actual = element(&mut stream).unwrap();
+            let actual = element(&mut tokens.as_slice()).unwrap();
             assert_eq!(expected, actual);
         }
     }
